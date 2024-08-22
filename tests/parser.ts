@@ -7,12 +7,22 @@ function shouldParseSuccess(input: string) {
 	equal(ast.type, 'Program')
 }
 
-function shouldType(input: string, type: 'IntLit' | 'FloatLit' | 'Ident') {
+function shouldParseFail(input: string) {
+	throws(() => parse(input))
+}
+
+function shouldType(
+	input: string,
+	type: 'IntLit' | 'FloatLit' | 'BoolLit' | 'Ident',
+) {
 	// console.log(JSON.stringify(parse(input), undefined, 2))
 	const ast = parse(input)
 	equal(ast.type, 'Program')
-	equal(ast.exprs.length, 1)
-	equal(ast.exprs[0].type, type)
+	equal(ast.stmts.length, 1)
+	if (ast.stmts[0].type !== 'ExprStmt') {
+		throw Error()
+	}
+	equal(ast.stmts[0].expr.type, type)
 }
 
 test('int literal', () => {
@@ -28,26 +38,36 @@ test('float literal', () => {
 	shouldFloatLiteral('4.0 ;')
 	shouldFloatLiteral('42.0;')
 	shouldFloatLiteral('42.;')
-	throws(() => shouldFloatLiteral('.42'))
+	shouldParseFail('.42;')
+})
+
+test('bool literal', () => {
+	const shouldBoolLiteral = (input: string) => shouldType(input, 'BoolLit')
+	shouldBoolLiteral('true;')
+	shouldBoolLiteral('false;')
+	shouldBoolLiteral('false ;')
 })
 
 test('parentheses', () => {
 	const ast = parse('(42);')
 	equal(ast.type, 'Program')
-	equal(ast.exprs.length, 1)
-	if (ast.exprs[0].type !== 'ParenthesesExpr') {
-		throw new Error('Expected ParenthesesExpr')
+	equal(ast.stmts.length, 1)
+	if (ast.stmts[0].type !== 'ExprStmt') {
+		throw new Error()
 	}
-	equal(ast.exprs[0].expr.type, 'IntLit')
+	if (ast.stmts[0].expr.type !== 'ParenthesesExpr') {
+		throw new Error()
+	}
+	equal(ast.stmts[0].expr.expr.type, 'IntLit')
 })
 
 test('identifier', () => {
 	const shouldIdent = (input: string) => shouldType(input, 'Ident')
 	shouldIdent('foo;')
 	shouldIdent('x;')
-	const keywords = ['let', 'in', 'if', 'then', 'else', 'fun']
+	const keywords = ['let', 'in', 'if', 'then', 'else', 'fun', 'false', 'true']
 	for (const keyword of keywords) {
-		throws(() => shouldIdent(`${keyword};`))
+		shouldParseFail(`${keyword}`)
 	}
 })
 
@@ -55,11 +75,14 @@ test('binary expression', () => {
 	function topOp(input: string, op: BinaryOp) {
 		const ast = parse(input)
 		equal(ast.type, 'Program')
-		equal(ast.exprs.length, 1)
-		if (ast.exprs[0].type !== 'BinaryExpr') {
-			throw new Error('Expected BinaryExpr')
+		equal(ast.stmts.length, 1)
+		if (ast.stmts[0].type !== 'ExprStmt') {
+			throw new Error()
 		}
-		equal(ast.exprs[0].op, op)
+		if (ast.stmts[0].expr.type !== 'BinaryExpr') {
+			throw new Error()
+		}
+		equal(ast.stmts[0].expr.op, op)
 	}
 
 	topOp('x == y;', '==')
@@ -95,15 +118,27 @@ test('let expression', () => {
 	shouldParseSuccess('let x = 1 in let y = 2 in x + y;')
 })
 
-// test('function expression', () => {
-// 	shouldParseSuccess('fun x -> x + 1;')
-// 	shouldParseSuccess('fun x y z -> x + y + z;')
-// 	shouldParseSuccess('fun x -> fun y + z -> x + y;')
-// })
+function shouldDecl(input: string, decl: 'LetDecl' | 'FunDecl') {
+	const ast = parse(input)
+	equal(ast.type, 'Program')
+	equal(ast.stmts.length, 1)
+	equal(ast.stmts[0].type, decl)
+}
 
-// test('function application', () => {
-// 	shouldParseSuccess('(fun x -> x + 1) 2;')
-// 	shouldParseSuccess('(fun x -> fun y -> x + y) 1 2;')
-// })
+test('let declaration', () => {
+	shouldDecl('let x = 1;', 'LetDecl')
+	shouldDecl('let f x y = x + y;', 'FunDecl')
+	shouldDecl('let rec f n = if n == 0 then 1 else n * (f (n - 1));', 'FunDecl')
+})
+
+test('function application', () => {
+	shouldParseSuccess('f;')
+	shouldParseSuccess('f 1;')
+	shouldParseSuccess('f 1 2;')
+	shouldParseSuccess('f x y z;')
+	shouldParseSuccess('f 1 2 3;')
+	shouldParseSuccess('true 1;')
+	shouldParseFail('let 1;')
+})
 
 test.run()

@@ -1,22 +1,38 @@
-Program
-  = _ exprs:(expr:Expression _ ";" { return expr })* _ {
+Program = _ stmts:Statment* _ {
     return {
       type: "Program",
-      exprs,
+      stmts,
     }
   }
+
+Statment =
+  ExpressionStmt
+  / LetDecl
+
+LetDecl
+  = "let" _ recursion:"rec"? _ name:Identifier _ args:(_ arg: Identifier {return arg})* _ "=" _ expr:Expression _ ";" {
+    if (args.length !== 0) {
+      let rec = typeof recursion !== 'undefined';
+      return { type: 'FunDecl', name, arguments: args, body: expr, rec }
+    } else {
+      return { type: "LetDecl", name, expr };
+    }
+  }
+
+ExpressionStmt = expr:Expression _ ";" {
+    return { type: 'ExprStmt', expr }
+}
 
 Expression
   = LetExpr 
   / IfExpr 
-  / FunExpr 
   / AppExpr   
   / BinaryExpr 
   / PrimaryExpr 
   / ParenthesesExpr
 
 LetExpr
-  = "let" _ name:Identifier _ "=" _ val:Expression _ "in" _ body:Expression {
+  = "let" _ name:Identifier _ params: "=" _ val:Expression _ "in" _ body:Expression {
     return { type: "LetExpr", name, val, body };
   }
 
@@ -29,14 +45,9 @@ IfExpr
     }
   }
 
-FunExpr
-  = "fun" _ param:Identifier _ "->" _ body:Expression {
-    return { type: "FunExpr", param, body };
-  }
-
 AppExpr 
-  = func:PrimaryExpr _ arg:PrimaryExpr {
-    return { type: "AppExpr", func, arg };
+  = func:PrimaryExpr _ argument:Expression {
+    return { type: "AppExpr", func, argument };
   }
 
 BinaryExpr = BinaryPrecOneExpr
@@ -78,6 +89,7 @@ PrimaryExpr
 
 LiteralExpr = Float
  / Int
+ / Bool
 
 ParenthesesExpr = "(" _ expr:Expression _ ")" { 
   return {
@@ -93,6 +105,8 @@ keyword
   / "then"
   / "else"
   / "fun"
+  / "false"
+  / "true"
 
 Identifier
   = !keyword [a-zA-Z_][a-zA-Z0-9_]* { return {type: 'Ident', name: text()}  }
@@ -100,6 +114,10 @@ Identifier
 Int = [0-9]+ { return { type: "IntLit", value: parseInt(text(), 10) }; }
 
 Float = [0-9]+ "." [0-9]* { return { type: 'FloatLit', value: parseFloat(text())} }
+
+Bool = BoolLit _ { return { type: "BoolLit", value: text() === "true" } }
+
+BoolLit = "false" / "true"
 
 Whitespace = " " / "\t" / "\n" / "\r"
 

@@ -10,6 +10,9 @@
 		"pnpm": "9.7.1"
 	},
 	"packageManager": "pnpm@9.7.1",
+	"dependencies": {
+		"immutable": "^4.3.7"
+	},
 	"devDependencies": {
 		"@biomejs/biome": "^1.8.3",
 		"esbuild": "^0.23.1",
