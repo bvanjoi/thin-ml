@@ -1,0 +1,20 @@
+{
+	"scripts": {
+		"prepare": "node ./grammar/index.js",
+		"build": "echo",
+		"pretest": "npm run prepare",
+		"test": "uvu -r esbuild-register ./tests"
+	},
+	"engines": {
+		"node": "22.6.0",
+		"pnpm": "9.7.1"
+	},
+	"packageManager": "pnpm@9.7.1",
+	"devDependencies": {
+		"@biomejs/biome": "^1.8.3",
+		"esbuild": "^0.23.1",
+		"esbuild-register": "^3.6.0",
+		"peggy": "^4.0.3",
+		"uvu": "^0.5.6"
+	}
+}
