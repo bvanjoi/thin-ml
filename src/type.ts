@@ -28,6 +28,25 @@ export type Type =
 	| { type: 'Bool' }
 	| TArr
 
+export function isSameType(t1: Type, t2: Type): boolean {
+	if (t1.type === 'TVar' && t2.type === 'TVar') {
+		return isSameVariable(t1, t2)
+	}
+	if (t1.type === 'Int' && t2.type === 'Int') {
+		return true
+	}
+	if (t1.type === 'Float' && t2.type === 'Float') {
+		return true
+	}
+	if (t1.type === 'Bool' && t2.type === 'Bool') {
+		return true
+	}
+	if (t1.type === 'TArr' && t2.type === 'TArr') {
+		return isSameType(t1.ty1, t2.ty1) && isSameType(t1.ty2, t2.ty2)
+	}
+	return false
+}
+
 export const typeInt = (): Type => ({
 	type: 'Int',
 })

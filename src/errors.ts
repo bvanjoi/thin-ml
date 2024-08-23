@@ -1,7 +1,7 @@
 import type { Constraint } from './contraint'
 import type { TVar, Type } from './type'
 
-export type TypeError =
+export type CheckTypeError =
 	| UnificationFail
 	| InfiniteType
 	| UnboundVariable

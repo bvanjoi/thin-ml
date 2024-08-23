@@ -7,7 +7,13 @@ import {
 	parse,
 } from '../grammar/parser'
 import type { Constraint } from './contraint'
-import { UnboundVariable } from './errors'
+import {
+	CheckTypeError,
+	InfiniteType,
+	UnboundVariable,
+	UnificationFail,
+	UnificationMismatch,
+} from './errors'
 import * as ty from './type'
 
 type Name = string
@@ -137,11 +143,11 @@ class Substitutable {
 			}
 			return res
 		}
-		if (ty.type === 'TFunCall') {
+		if (ty.type === 'TArr') {
 			return {
-				type: 'TFunCall',
-				arguments: ty.arguments.map(arg => this.substType(arg)),
-				ret: this.substType(ty.ret),
+				type: 'TArr',
+				ty1: this.substType(ty.ty1),
+				ty2: this.substType(ty.ty2),
 			}
 		}
 		unreachable()
@@ -187,8 +193,16 @@ class Substitutable {
 		unreachable()
 	}
 
+	substListCons(v: Immutable.List<Constraint>): Immutable.List<Constraint> {
+		return v.map(item => this.substCons(item))
+	}
+
 	substListVar(v: Immutable.List<ty.TVar>): Immutable.List<ty.TVar> {
 		return v.map(item => this.substTVar(item))
+	}
+
+	substListType(v: Immutable.List<ty.Type>): Immutable.List<ty.Type> {
+		return v.map(item => this.substType(item))
 	}
 
 	substSetVar(v: Immutable.Set<ty.TVar>): Immutable.Set<ty.TVar> {
@@ -201,7 +215,6 @@ type Variables = Immutable.Set<ty.TVar>
 function ftvTVar(t: ty.TVar): Variables {
 	return Immutable.Set([t])
 }
-
 function ftvType(t: ty.Type): Variables {
 	if (isConstType(t)) {
 		return Immutable.Set()
@@ -209,11 +222,8 @@ function ftvType(t: ty.Type): Variables {
 	if (t.type === 'TVar') {
 		return ftvTVar(t)
 	}
-	if (t.type === 'TFunCall') {
-		return Immutable.Set.union([
-			...t.arguments.map(arg => ftvType(arg)),
-			ftvType(t.ret),
-		])
+	if (t.type === 'TArr') {
+		return Immutable.Set.union([ftvType(t.ty1), ftvType(t.ty2)])
 	}
 	unreachable()
 }
@@ -399,42 +409,176 @@ function inferExpr(expr: Expression): [Assumption, Constraint[], ty.Type] {
 	unreachable()
 }
 
-function inferType(env: TypeEnv, expr: Expression) {
+function inferType(env: TypeEnv, expr: Expression): [Subst, ty.Type] {
 	const errors = []
 	const [as, cs, t] = inferExpr(expr)
 	const unbounds = Immutable.Set(as.keys()).subtract(env.keys())
 	for (const v of unbounds) {
 		errors.push(new UnboundVariable(v))
+		throw Error(errors.join(','))
 	}
-	// const cs2 =
+	const cs2 = env
+		.toList()
+		.filter(([name, _]) => as.lookup(name))
+		.map(
+			([_, scheme]) =>
+				({
+					kind: 'ExpInstConst',
+					ty: t,
+					scheme,
+				}) as Constraint,
+		)
+	const subst = solve([...cs2, ...cs])
+	return [subst, new Substitutable(subst).substType(t)]
 }
 
-function inferStmt(env: TypeEnv, stmt: Statement): [TypeEnv, Error[]] {
+function inferStmt(env: TypeEnv, stmt: Statement): [TypeEnv, Subst, ty.Type] {
 	const tyEnv = env
 	if (stmt.type === 'ExprStmt') {
-	} else if (stmt.type === 'FnDecl') {
+		return [tyEnv, ...inferType(tyEnv, stmt.expr)]
+	}
+	if (stmt.type === 'FnDecl') {
 	} else if (stmt.type === 'LetDecl') {
 	}
 	unreachable()
 }
 
-function inferTop(env: TypeEnv, p: Program): [TypeEnv, Error[]] {
+function inferTop(env: TypeEnv, p: Program): [ty.Type[], TypeError[]] {
 	let tyEnv = env
-	const errors = []
+	const errors: TypeError[] = []
+	const tys: ty.Type[] = []
 	for (const stmt of p.stmts) {
-		const res = inferStmt(tyEnv, stmt)
-		tyEnv = res[0]
-		errors.push(...res[1])
+		try {
+			const res = inferStmt(tyEnv, stmt)
+			tyEnv = res[0]
+			tys.push(res[2])
+		} catch (error: unknown) {
+			errors.push(error as TypeError)
+		}
 	}
-	return [tyEnv, errors]
+	return [tys, errors]
 }
 
-type Context = {
-	ty: TypeEnv
+function nextSolvable(cs: Constraint[]): [Constraint, Constraint[]] {
+	function chooseOne(cs: Constraint[]): [Constraint, Constraint[]][] {
+		return cs.map((x, i) => {
+			const ys = cs.filter((_, j) => i !== j)
+			return [x, ys]
+		})
+	}
+	function solvable(c: Constraint): boolean {
+		if (c.kind === 'EqConst' || c.kind === 'ExpInstConst') {
+			return true
+		}
+		return (
+			Immutable.Set.intersect([ftvType(c.ty2).subtract(c.ms), atvConstraint(c)])
+				.size === 0
+		)
+	}
+	const res = chooseOne(cs).find(([c, ys]) => solvable(c))
+	if (!res) {
+		throw Error('No solvable constraint')
+	}
+	return res
 }
 
-export function exec(input: string): ty.Type[] {
+function bind(v: ty.TVar, t: ty.Type): Subst {
+	if (t.type === 'TVar' && ty.isSameVariable(v, t)) {
+		return Immutable.Map()
+	}
+	if (ftvType(t).has(v)) {
+		throw new InfiniteType(v, t)
+	}
+	return Immutable.Map([[v, t]])
+}
+
+function compose(s1: Subst, s2: Subst): Subst {
+	const s = s2.map(t => new Substitutable(s1).substType(t))
+	return s.merge(s1)
+}
+
+function unifyMany(t1: ty.Type[], t2: ty.Type[]): Subst {
+	if (t1.length === 0 && t2.length === 0) {
+		return Immutable.Map()
+	}
+	if (t1.length < 2 || t2.length < 2) {
+		throw new UnificationMismatch(t1, t2)
+	}
+	const [t1Head, ...t1Tail] = t1
+	const [t2Head, ...t2Tail] = t2
+	const su1 = unifies(t1Head, t2Head)
+	const su2 = unifyMany(
+		new Substitutable(su1).substListType(Immutable.List(t1Tail)).toArray(),
+		new Substitutable(su1).substListType(Immutable.List(t2Tail)).toArray(),
+	)
+	return compose(su2, su1)
+}
+
+function unifies(t1: ty.Type, t2: ty.Type): Subst {
+	if (ty.isSameType(t1, t2)) {
+		return Immutable.Map()
+	}
+	if (t1.type === 'TVar') {
+		return bind(t1, t2)
+	}
+	if (t2.type === 'TVar') {
+		return bind(t2, t1)
+	}
+	if (t1.type === 'TArr' && t2.type === 'TArr') {
+		return unifyMany([t1.ty1, t1.ty2], [t2.ty1, t2.ty2])
+	}
+	throw new UnificationFail(t1, t2)
+}
+
+function generalize(free: Immutable.Set<ty.TVar>, ty: ty.Type): ty.Scheme {
+	const bound = ftvType(ty).subtract(free)
+	return {
+		kind: 'ForAll',
+		as: bound.toList(),
+		ty,
+	}
+}
+
+function instantiate(s: ty.Scheme): ty.Type {
+	const as = s.as.map(fresh)
+	const su = Immutable.Map(s.as.map((v, i) => [v, as.get(i) as ty.Type]))
+	return new Substitutable(su).substType(s.ty)
+}
+
+function solve(cs: Constraint[]): Subst {
+	if (cs.length === 0) {
+		return Immutable.Map()
+	}
+	const [nextC, nextCs] = nextSolvable(cs)
+	if (nextC.kind === 'EqConst') {
+		const su1 = unifies(nextC.ty1, nextC.ty2)
+		const su2 = solve(
+			new Substitutable(su1).substListCons(Immutable.List(nextCs)).toArray(),
+		)
+		return compose(su2, su1)
+	}
+	if (nextC.kind === 'ImpInstConst') {
+		return solve([
+			{
+				kind: 'ExpInstConst',
+				ty: nextC.ty1,
+				scheme: generalize(nextC.ms, nextC.ty2),
+			},
+			...nextCs,
+		])
+	}
+
+	return solve([
+		{
+			kind: 'EqConst',
+			ty1: nextC.ty,
+			ty2: instantiate(nextC.scheme),
+		},
+		...nextCs,
+	])
+}
+
+export function exec(input: string): [ty.Type[], Error[]] {
 	const p = parse(input)
-	const [tyEnv, errors] = inferTop(TypeEnv.empty(), p)
-	return []
+	return inferTop(TypeEnv.empty(), p)
 }
