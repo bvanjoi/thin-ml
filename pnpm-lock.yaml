@@ -24,6 +24,9 @@ importers:
       peggy:
         specifier: ^4.0.3
         version: 4.0.3
+      typescript:
+        specifier: ^5.5.4
+        version: 5.5.4
       uvu:
         specifier: ^0.5.6
         version: 0.5.6
@@ -298,6 +301,11 @@ packages:
     resolution: {integrity: sha512-psgxdGMwl5MZM9S3FWee4EgsEaIjahYV5AzGnwUvPhWeITz/j6rKpysQHlQ4USdxvINlb8lKfWGIXwfkrgtqkA==}
     engines: {node: '>= 10'}
 
+  typescript@5.5.4:
+    resolution: {integrity: sha512-Mtq29sKDAEYP7aljRgtPOpTvOfbwRWlS6dPRzwjdE+C0R4brX/GUyhHSecbHMFLNBLcJIPt9nl9yG5TZ1weH+Q==}
+    engines: {node: '>=14.17'}
+    hasBin: true
+
   uvu@0.5.6:
     resolution: {integrity: sha512-+g8ENReyr8YsOc6fv/NVJs2vFdHBnBNdfE49rshrTzDWOlUx4Gq7KOS2GD8eqhy2j+Ejq29+SbKH8yjkAqXqoA==}
     engines: {node: '>=8'}
@@ -490,6 +498,8 @@ snapshots:
       lru-cache: 6.0.0
 
   source-map-generator@0.8.0: {}
+
+  typescript@5.5.4: {}
 
   uvu@0.5.6:
     dependencies:

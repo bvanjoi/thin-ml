@@ -107,9 +107,15 @@ keyword
   / "fun"
   / "false"
   / "true"
+  / "rec"
 
 Identifier
-  = !keyword [a-zA-Z_][a-zA-Z0-9_]* { return {type: 'Ident', name: text()}  }
+  = !keyword name:IdentifierName {  return { type: 'Ident', value: name } }
+
+IdentifierName "identifier"
+  = head:[a-zA-Z_] tail:[a-zA-Z0-9_]* {
+      return head + tail.join("")
+    }
 
 Int = [0-9]+ { return { type: "IntLit", value: parseInt(text(), 10) }; }
 

@@ -2,7 +2,6 @@ export type Program = {
 	type: 'Program'
 	stmts: Statement[]
 }
-
 export type Statement = LetDecl | FnDecl | ExprStmt
 export type LetDecl = {
 	type: 'LetDecl'
@@ -10,7 +9,7 @@ export type LetDecl = {
 	expr: Expression
 }
 export type FnDecl = {
-	type: 'FnDecl'
+	type: 'FunDecl'
 	name: Identifier
 	arguments: Identifier[]
 	body: Expression

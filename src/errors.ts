@@ -8,7 +8,7 @@ export type CheckTypeError =
 	| Ambiguous
 	| UnificationMismatch
 
-export class UnificationFail extends TypeError {
+export class UnificationFail extends Error {
 	constructor(type1: Type, type2: Type) {
 		super(
 			`Unification failed between ${JSON.stringify(type1)} and ${JSON.stringify(type2)}`,
@@ -16,7 +16,7 @@ export class UnificationFail extends TypeError {
 	}
 }
 
-export class InfiniteType extends TypeError {
+export class InfiniteType extends Error {
 	constructor(tvar: TVar, type: Type) {
 		super(
 			`Infinite type detected for variable ${tvar.id} with type ${JSON.stringify(type)}`,
@@ -24,19 +24,19 @@ export class InfiniteType extends TypeError {
 	}
 }
 
-export class UnboundVariable extends TypeError {
+export class UnboundVariable extends Error {
 	constructor(variable: string) {
 		super(`Unbound variable: ${variable}`)
 	}
 }
 
-export class Ambiguous extends TypeError {
+export class Ambiguous extends Error {
 	constructor(constraints: Constraint[]) {
 		super(`Ambiguous constraints: ${JSON.stringify(constraints)}`)
 	}
 }
 
-export class UnificationMismatch extends TypeError {
+export class UnificationMismatch extends Error {
 	constructor(types1: Type[], types2: Type[]) {
 		super(
 			`Unification mismatch between ${JSON.stringify(types1)} and ${JSON.stringify(types2)}`,

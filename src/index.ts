@@ -8,7 +8,6 @@ import {
 } from '../grammar/parser'
 import type { Constraint } from './contraint'
 import {
-	CheckTypeError,
 	InfiniteType,
 	UnboundVariable,
 	UnificationFail,
@@ -409,9 +408,35 @@ function inferExpr(expr: Expression): [Assumption, Constraint[], ty.Type] {
 	unreachable()
 }
 
-function inferType(env: TypeEnv, expr: Expression): [Subst, ty.Type] {
+function inferLambda(v: Lambda): [Assumption, Constraint[], ty.Type] {
+	const a = fresh()
+	let as: Assumption
+	let cs: Constraint[]
+	let t: ty.Type
+
+	if (v.body.type === 'Lambda') {
+		// TODO: insert a into inferState
+		;[as, cs, t] = inferLambda(v.body)
+	} else {
+		;[as, cs, t] = inferExpr(v.body)
+	}
+	return [
+		as.remove(v.name),
+		[
+			...cs,
+			...as
+				.lookup(v.name)
+				.map(v => ({ kind: 'EqConst', ty1: v, ty2: a }) as Constraint),
+		],
+		{ type: 'TArr', ty1: a, ty2: t },
+	]
+}
+
+function inferType(
+	env: TypeEnv,
+	[as, cs, t]: [Assumption, Constraint[], ty.Type],
+): [Subst, ty.Type] {
 	const errors = []
-	const [as, cs, t] = inferExpr(expr)
 	const unbounds = Immutable.Set(as.keys()).subtract(env.keys())
 	for (const v of unbounds) {
 		errors.push(new UnboundVariable(v))
@@ -432,31 +457,135 @@ function inferType(env: TypeEnv, expr: Expression): [Subst, ty.Type] {
 	return [subst, new Substitutable(subst).substType(t)]
 }
 
-function inferStmt(env: TypeEnv, stmt: Statement): [TypeEnv, Subst, ty.Type] {
-	const tyEnv = env
-	if (stmt.type === 'ExprStmt') {
-		return [tyEnv, ...inferType(tyEnv, stmt.expr)]
-	}
-	if (stmt.type === 'FnDecl') {
-	} else if (stmt.type === 'LetDecl') {
+function normalize(s: ty.Scheme): ty.Scheme {
+	if (s.kind === 'ForAll') {
+		function normtype(t: ty.Type): ty.Type {
+			if (isConstType(t)) {
+				return t
+			}
+			if (t.type === 'TVar') {
+				const res = ord.find(item => ty.isSameVariable(item[0], t))
+				if (!res) {
+					throw Error('type variable not in signature')
+				}
+				return res[1]
+			}
+			if (t.type === 'TArr') {
+				return {
+					type: 'TArr',
+					ty1: normtype(t.ty1),
+					ty2: normtype(t.ty2),
+				}
+			}
+			unreachable()
+		}
+
+		function fv(t: ty.Type): ty.Type[] {
+			if (isConstType(t)) {
+				return []
+			}
+			if (t.type === 'TVar') {
+				return [t]
+			}
+			if (t.type === 'TArr') {
+				return [...fv(t.ty1), ...fv(t.ty2)]
+			}
+			unreachable()
+		}
+
+		const ord = Array.from(new Set(fv(s.ty))).map(
+			item => [item, fresh()] as [ty.TVar, ty.TVar],
+		)
+		return {
+			kind: 'ForAll',
+			as: Immutable.List(ord.map(([_, snd]) => snd)),
+			ty: normtype(s.ty),
+		}
 	}
 	unreachable()
 }
 
-function inferTop(env: TypeEnv, p: Program): [ty.Type[], TypeError[]] {
+function closeOver(ty: ty.Type): ty.Scheme {
+	return normalize(generalize(Immutable.Set(), ty))
+}
+
+let exprCount = 0
+const EXPR_NAME = '__it'
+function nextExprId() {
+	const old = exprCount
+	exprCount += 1
+	return `${EXPR_NAME}(${old})`
+}
+
+interface Lambda {
+	type: 'Lambda'
+	name: string
+	body: Lambda | Expression
+}
+
+function inferStmt(env: TypeEnv, stmt: Statement): TypeEnv {
+	const tyEnv = env
+	// const s = Immutable.Set()
+	if (stmt.type === 'ExprStmt') {
+		const [subst, ty] = inferType(tyEnv, inferExpr(stmt.expr))
+		return tyEnv.extend([
+			nextExprId(),
+			closeOver(new Substitutable(subst).substType(ty)),
+		])
+	}
+
+	if (stmt.type === 'FunDecl') {
+		function foldR(body: Expression, args: string[]): Expression | Lambda {
+			let before: Expression | Lambda = body
+			for (let i = args.length - 1; i > 0; i -= 1) {
+				before = {
+					type: 'Lambda',
+					name: args[i],
+					body: before,
+				} as Lambda
+			}
+			return before
+		}
+		const lambda: Lambda = {
+			type: 'Lambda',
+			name: stmt.name.value,
+			body: foldR(
+				stmt.body,
+				stmt.arguments.map(i => i.value),
+			),
+		}
+		const [subst, ty] = inferType(tyEnv, inferLambda(lambda))
+		return tyEnv.extend([
+			stmt.name.value,
+			closeOver(new Substitutable(subst).substType(ty)),
+		])
+	}
+	if (stmt.type === 'LetDecl') {
+		const lambda: Lambda = {
+			type: 'Lambda',
+			name: stmt.name.value,
+			body: stmt.expr,
+		}
+		const [subst, ty] = inferType(tyEnv, inferLambda(lambda))
+		return tyEnv.extend([
+			stmt.name.value,
+			closeOver(new Substitutable(subst).substType(ty)),
+		])
+	}
+	unreachable()
+}
+
+function inferTop(env: TypeEnv, p: Program): [TypeEnv, TypeError[]] {
 	let tyEnv = env
 	const errors: TypeError[] = []
-	const tys: ty.Type[] = []
 	for (const stmt of p.stmts) {
 		try {
-			const res = inferStmt(tyEnv, stmt)
-			tyEnv = res[0]
-			tys.push(res[2])
+			tyEnv = inferStmt(tyEnv, stmt)
 		} catch (error: unknown) {
 			errors.push(error as TypeError)
 		}
 	}
-	return [tys, errors]
+	return [tyEnv, errors]
 }
 
 function nextSolvable(cs: Constraint[]): [Constraint, Constraint[]] {
@@ -475,7 +604,7 @@ function nextSolvable(cs: Constraint[]): [Constraint, Constraint[]] {
 				.size === 0
 		)
 	}
-	const res = chooseOne(cs).find(([c, ys]) => solvable(c))
+	const res = chooseOne(cs).find(([c]) => solvable(c))
 	if (!res) {
 		throw Error('No solvable constraint')
 	}
@@ -501,7 +630,7 @@ function unifyMany(t1: ty.Type[], t2: ty.Type[]): Subst {
 	if (t1.length === 0 && t2.length === 0) {
 		return Immutable.Map()
 	}
-	if (t1.length < 2 || t2.length < 2) {
+	if (t1.length === 0 || t2.length === 0) {
 		throw new UnificationMismatch(t1, t2)
 	}
 	const [t1Head, ...t1Tail] = t1
@@ -580,5 +709,12 @@ function solve(cs: Constraint[]): Subst {
 
 export function exec(input: string): [ty.Type[], Error[]] {
 	const p = parse(input)
-	return inferTop(TypeEnv.empty(), p)
+	const [tyContext, errors] = inferTop(TypeEnv.empty(), p)
+	return [
+		tyContext
+			.toList()
+			.filter(([name, _]) => name.startsWith('__it'))
+			.map(([_, s]) => s.ty),
+		errors,
+	]
 }

@@ -63,8 +63,27 @@ test('parentheses', () => {
 
 test('identifier', () => {
 	const shouldIdent = (input: string) => shouldType(input, 'Ident')
-	shouldIdent('foo;')
-	shouldIdent('x;')
+	// shouldIdent('foo;')
+	// shouldIdent('x;')
+
+	function is(input: string, name: string) {
+		const ast = parse(input)
+		equal(ast.type, 'Program')
+		equal(ast.stmts.length, 1)
+		if (
+			ast.stmts[0].type === 'ExprStmt' &&
+			ast.stmts[0].expr.type === 'Ident'
+		) {
+			equal(ast.stmts[0].expr.value, name)
+		} else {
+			throw Error()
+		}
+	}
+
+	is('foo;', 'foo')
+	is('abc;', 'abc')
+	is('x;', 'x')
+
 	const keywords = ['let', 'in', 'if', 'then', 'else', 'fun', 'false', 'true']
 	for (const keyword of keywords) {
 		shouldParseFail(`${keyword}`)
@@ -129,6 +148,25 @@ test('let declaration', () => {
 	shouldDecl('let x = 1;', 'LetDecl')
 	shouldDecl('let f x y = x + y;', 'FunDecl')
 	shouldDecl('let rec f n = if n == 0 then 1 else n * (f (n - 1));', 'FunDecl')
+
+	function nameIs(input: string, name: string) {
+		const ast = parse(input)
+		equal(ast.type, 'Program')
+		equal(ast.stmts.length, 1)
+		if (ast.stmts[0].type === 'LetDecl') {
+			equal(ast.stmts[0].name.value, name)
+		} else if (ast.stmts[0].type === 'FunDecl') {
+			equal(ast.stmts[0].name.value, name)
+		} else {
+			throw Error()
+		}
+	}
+	nameIs('let x = 1;', 'x')
+	nameIs('let rec f n = if n == 0 then 1 else n * (f (n - 1));', 'f')
+	nameIs('let f x y = x + y;', 'f')
+	nameIs('let abc = 1;', 'abc')
+	nameIs('let abc x = x ;', 'abc')
+	nameIs('let abc x y = x + y;', 'abc')
 })
 
 test('function application', () => {
