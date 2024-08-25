@@ -63,8 +63,8 @@ test('parentheses', () => {
 
 test('identifier', () => {
 	const shouldIdent = (input: string) => shouldType(input, 'Ident')
-	// shouldIdent('foo;')
-	// shouldIdent('x;')
+	shouldIdent('foo;')
+	shouldIdent('x;')
 
 	function is(input: string, name: string) {
 		const ast = parse(input)
@@ -129,7 +129,6 @@ test('binary expression', () => {
 
 test('if expression', () => {
 	shouldParseSuccess('if 1 == 2 then 3 else 4;')
-	shouldParseSuccess('if 1 == 2 then 3;')
 })
 
 test('let expression', () => {
@@ -143,6 +142,10 @@ function shouldDecl(input: string, decl: 'LetDecl' | 'FunDecl') {
 	equal(ast.stmts.length, 1)
 	equal(ast.stmts[0].type, decl)
 }
+
+test('let in', () => {
+	shouldParseSuccess('let a = b in a;')
+})
 
 test('let declaration', () => {
 	shouldDecl('let x = 1;', 'LetDecl')
@@ -167,6 +170,23 @@ test('let declaration', () => {
 	nameIs('let abc = 1;', 'abc')
 	nameIs('let abc x = x ;', 'abc')
 	nameIs('let abc x y = x + y;', 'abc')
+
+	function rec(input: string, isRec: boolean) {
+		const ast = parse(input)
+		equal(ast.type, 'Program')
+		equal(ast.stmts.length, 1)
+		if (ast.stmts[0].type === 'FunDecl') {
+			equal(ast.stmts[0].rec, isRec)
+		} else {
+			throw Error()
+		}
+	}
+	rec('let f x y = x + y;', false)
+	rec('let rec f x y = x + y;', true)
+
+	shouldParseSuccess('let f x y = x + y;f;')
+	shouldParseSuccess('let f x y = x + y;\nf;')
+	shouldParseSuccess('let f x y = x + y; f;')
 })
 
 test('function application', () => {

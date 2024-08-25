@@ -1,4 +1,4 @@
-import type { Constraint } from './contraint'
+import type { Constraint } from './constraint'
 import type { TVar, Type } from './type'
 
 export type CheckTypeError =

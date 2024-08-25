@@ -1,0 +1,6 @@
+#cm-output {
+   white-space: pre-wrap;
+}
+#cm-output.error {
+  color: red;
+}

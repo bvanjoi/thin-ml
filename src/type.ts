@@ -10,7 +10,6 @@ export function tVarNextId(): number {
 export function isSameVariable(v1: TVar, v2: TVar): boolean {
 	return v1.id === v2.id
 }
-
 export type TVar = {
 	type: 'TVar'
 	id: number
@@ -20,7 +19,6 @@ export type TArr = {
 	ty1: Type
 	ty2: Type
 }
-
 export type Type =
 	| TVar
 	| { type: 'Int' }

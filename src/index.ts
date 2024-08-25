@@ -6,7 +6,7 @@ import {
 	type Statement,
 	parse,
 } from '../grammar/parser'
-import type { Constraint } from './contraint'
+import type { Constraint } from './constraint'
 import {
 	InfiniteType,
 	UnboundVariable,
@@ -305,7 +305,12 @@ function opType(op: BinaryOp): ty.Type {
 	}
 }
 
-function inferExpr(expr: Expression): [Assumption, Constraint[], ty.Type] {
+type VariableWithinLetInScope = Immutable.Set<ty.TVar>
+
+function inferExpr(
+	expr: Expression,
+	v: VariableWithinLetInScope,
+): [Assumption, Constraint[], ty.Type] {
 	if (expr.type === 'IntLit') {
 		return [Assumption.empty(), [], ty.typeInt()]
 	}
@@ -317,16 +322,16 @@ function inferExpr(expr: Expression): [Assumption, Constraint[], ty.Type] {
 	}
 	if (expr.type === 'Ident') {
 		const tv = fresh()
-		return [Assumption.empty(), [], tv]
+		return [Assumption.singleton([expr.value, tv]), [], tv]
 	}
 	if (expr.type === 'ParenthesesExpr') {
-		return inferExpr(expr.expr)
+		return inferExpr(expr.expr, v)
 	}
 	if (expr.type === 'IfExpr') {
-		const [as1, cs1, ty1] = inferExpr(expr.cond)
-		const [as2, cs2, ty2] = inferExpr(expr.then)
+		const [as1, cs1, ty1] = inferExpr(expr.cond, v)
+		const [as2, cs2, ty2] = inferExpr(expr.then, v)
 		if (expr.else) {
-			const [as3, cs3, ty3] = inferExpr(expr.then)
+			const [as3, cs3, ty3] = inferExpr(expr.then, v)
 			return [
 				Assumption.mergeAssumptions([as1, as2, as3]),
 				[
@@ -357,13 +362,14 @@ function inferExpr(expr: Expression): [Assumption, Constraint[], ty.Type] {
 					ty1: ty1,
 					ty2: ty.typeBool(),
 				},
+				// TODO: eqConst between ty2 and unit
 			],
 			ty2,
 		]
 	}
 	if (expr.type === 'BinaryExpr') {
-		const [as1, cs1, ty1] = inferExpr(expr.left)
-		const [as2, cs2, ty2] = inferExpr(expr.right)
+		const [as1, cs1, ty1] = inferExpr(expr.left, v)
+		const [as2, cs2, ty2] = inferExpr(expr.right, v)
 		const tv = fresh()
 		const u1: ty.Type = {
 			type: 'TArr',
@@ -382,10 +388,29 @@ function inferExpr(expr: Expression): [Assumption, Constraint[], ty.Type] {
 		]
 	}
 	if (expr.type === 'LetExpr') {
+		const [as1, cs1, ty1] = inferExpr(expr.val, v)
+		const [as2, cs2, ty2] = inferExpr(expr.body, v)
+		return [
+			as1.merge(as2),
+			[
+				...cs1,
+				...cs2,
+				...as2.lookup(expr.name.value).map(
+					ty =>
+						({
+							kind: 'ImpInstConst',
+							ty1: ty,
+							ms: v,
+							ty2: ty1,
+						}) as Constraint,
+				),
+			],
+			ty2,
+		]
 	}
 	if (expr.type === 'AppExpr') {
-		const [as1, cs1, ty1] = inferExpr(expr.func)
-		const [as2, cs2, ty2] = inferExpr(expr.argument)
+		const [as1, cs1, ty1] = inferExpr(expr.func, v)
+		const [as2, cs2, ty2] = inferExpr(expr.argument, v)
 		const tv = fresh()
 		return [
 			as1.merge(as2),
@@ -408,27 +433,63 @@ function inferExpr(expr: Expression): [Assumption, Constraint[], ty.Type] {
 	unreachable()
 }
 
-function inferLambda(v: Lambda): [Assumption, Constraint[], ty.Type] {
+function inferFix(
+	v: Lambda,
+	vars: VariableWithinLetInScope,
+): [[Assumption, Constraint[], ty.Type], VariableWithinLetInScope] {
+	const [[as, cs, t], vars2] = inferLambda(v, vars)
+	const tv = fresh()
+	return [
+		[
+			as,
+			[
+				...cs,
+				{
+					kind: 'EqConst',
+					ty1: t,
+					ty2: {
+						type: 'TArr',
+						ty1: tv,
+						ty2: tv,
+					},
+				},
+			],
+			tv,
+		],
+		vars2,
+	]
+}
+
+function inferLambda(
+	v: Lambda,
+	vars: VariableWithinLetInScope,
+): [[Assumption, Constraint[], ty.Type], VariableWithinLetInScope] {
 	const a = fresh()
 	let as: Assumption
 	let cs: Constraint[]
 	let t: ty.Type
+	let vars2 = vars
 
 	if (v.body.type === 'Lambda') {
 		// TODO: insert a into inferState
-		;[as, cs, t] = inferLambda(v.body)
+		;[[as, cs, t], vars2] = inferLambda(v.body, vars)
+		vars2 = vars.add(a)
 	} else {
-		;[as, cs, t] = inferExpr(v.body)
+		;[as, cs, t] = inferExpr(v.body, vars)
 	}
+
 	return [
-		as.remove(v.name),
 		[
-			...cs,
-			...as
-				.lookup(v.name)
-				.map(v => ({ kind: 'EqConst', ty1: v, ty2: a }) as Constraint),
+			as.remove(v.name),
+			[
+				...cs,
+				...as
+					.lookup(v.name)
+					.map(v => ({ kind: 'EqConst', ty1: v, ty2: a }) as Constraint),
+			],
+			{ type: 'TArr', ty1: a, ty2: t },
 		],
-		{ type: 'TArr', ty1: a, ty2: t },
+		vars2,
 	]
 }
 
@@ -438,21 +499,20 @@ function inferType(
 ): [Subst, ty.Type] {
 	const errors = []
 	const unbounds = Immutable.Set(as.keys()).subtract(env.keys())
-	for (const v of unbounds) {
-		errors.push(new UnboundVariable(v))
+	//  Immutable.Set(env.keys()).subtract(as.keys())
+	for (const unbound of unbounds) {
+		errors.push(new UnboundVariable(unbound))
 		throw Error(errors.join(','))
 	}
-	const cs2 = env
-		.toList()
-		.filter(([name, _]) => as.lookup(name))
-		.map(
-			([_, scheme]) =>
-				({
-					kind: 'ExpInstConst',
-					ty: t,
-					scheme,
-				}) as Constraint,
+	const cs2: Constraint[] = []
+	for (const [x, scheme] of env.toList()) {
+		cs2.push(
+			...as
+				.lookup(x)
+				.map(ty => ({ kind: 'ExpInstConst', ty, scheme }) as Constraint),
 		)
+	}
+
 	const subst = solve([...cs2, ...cs])
 	return [subst, new Substitutable(subst).substType(t)]
 }
@@ -510,11 +570,11 @@ function closeOver(ty: ty.Type): ty.Scheme {
 }
 
 let exprCount = 0
-const EXPR_NAME = '__it'
+const EXPR_NAME = 'it'
 function nextExprId() {
 	const old = exprCount
 	exprCount += 1
-	return `${EXPR_NAME}(${old})`
+	return `${EXPR_NAME}${old}`
 }
 
 interface Lambda {
@@ -525,9 +585,12 @@ interface Lambda {
 
 function inferStmt(env: TypeEnv, stmt: Statement): TypeEnv {
 	const tyEnv = env
-	// const s = Immutable.Set()
+	let varsWithinLetInScope: VariableWithinLetInScope = Immutable.Set()
 	if (stmt.type === 'ExprStmt') {
-		const [subst, ty] = inferType(tyEnv, inferExpr(stmt.expr))
+		const [subst, ty] = inferType(
+			tyEnv,
+			inferExpr(stmt.expr, varsWithinLetInScope),
+		)
 		return tyEnv.extend([
 			nextExprId(),
 			closeOver(new Substitutable(subst).substType(ty)),
@@ -535,38 +598,59 @@ function inferStmt(env: TypeEnv, stmt: Statement): TypeEnv {
 	}
 
 	if (stmt.type === 'FunDecl') {
-		function foldR(body: Expression, args: string[]): Expression | Lambda {
+		function foldR(body: Expression, args: string[]): Lambda {
 			let before: Expression | Lambda = body
-			for (let i = args.length - 1; i > 0; i -= 1) {
+			for (let i = args.length - 1; i >= 0; i -= 1) {
 				before = {
 					type: 'Lambda',
 					name: args[i],
 					body: before,
 				} as Lambda
 			}
+			if (before.type !== 'Lambda') {
+				throw Error('maybe arguments is empty which means parse had bug')
+			}
 			return before
 		}
-		const lambda: Lambda = {
-			type: 'Lambda',
-			name: stmt.name.value,
-			body: foldR(
-				stmt.body,
-				stmt.arguments.map(i => i.value),
-			),
+
+		const lambda = foldR(
+			stmt.body,
+			stmt.arguments.map(i => i.value),
+		)
+		if (stmt.rec) {
+			const [a, b] = inferLambda(lambda, varsWithinLetInScope)
+			varsWithinLetInScope = b
+			const [subst, ty] = inferType(tyEnv, a)
+			return tyEnv.extend([
+				stmt.name.value,
+				closeOver(new Substitutable(subst).substType(ty)),
+			])
 		}
-		const [subst, ty] = inferType(tyEnv, inferLambda(lambda))
+		const [a, b] = inferLambda(lambda, varsWithinLetInScope)
+		varsWithinLetInScope = b
+		const [subst, ty] = inferType(tyEnv, a)
 		return tyEnv.extend([
 			stmt.name.value,
 			closeOver(new Substitutable(subst).substType(ty)),
 		])
 	}
+
 	if (stmt.type === 'LetDecl') {
-		const lambda: Lambda = {
-			type: 'Lambda',
-			name: stmt.name.value,
-			body: stmt.expr,
-		}
-		const [subst, ty] = inferType(tyEnv, inferLambda(lambda))
+		const tv = fresh()
+		const as1 = Assumption.singleton([stmt.name.value, tv])
+		const [as2, cs2, ty2] = inferExpr(stmt.expr, varsWithinLetInScope)
+		const [subst, ty] = inferType(tyEnv, [
+			as1.merge(as2).remove(stmt.name.value),
+			[
+				...cs2,
+				{
+					kind: 'EqConst',
+					ty1: tv,
+					ty2: ty2,
+				},
+			],
+			tv,
+		])
 		return tyEnv.extend([
 			stmt.name.value,
 			closeOver(new Substitutable(subst).substType(ty)),
@@ -707,14 +791,37 @@ function solve(cs: Constraint[]): Subst {
 	])
 }
 
-export function exec(input: string): [ty.Type[], Error[]] {
+export function exec(input: string): [[string, ty.Type][], Error[]] {
 	const p = parse(input)
 	const [tyContext, errors] = inferTop(TypeEnv.empty(), p)
 	return [
-		tyContext
-			.toList()
-			.filter(([name, _]) => name.startsWith('__it'))
-			.map(([_, s]) => s.ty),
+		tyContext.toList().map(([name, s]) => [name, s.ty] as [string, ty.Type]),
 		errors,
 	]
+}
+
+export function printTypeWithName(name: string, t: ty.Type): string {
+	if (name.startsWith(EXPR_NAME)) {
+		name.replace(EXPR_NAME, 'it')
+	}
+	return `${name} : ${printType(t)}`
+}
+
+export function printType(t: ty.Type): string {
+	if (t.type === 'Int') {
+		return 'Int'
+	}
+	if (t.type === 'Float') {
+		return 'Float'
+	}
+	if (t.type === 'Bool') {
+		return 'Bool'
+	}
+	if (t.type === 'TVar') {
+		return `tVar(${t.id})`
+	}
+	if (t.type === 'TArr') {
+		return `${printType(t.ty1)} -> ${printType(t.ty2)}`
+	}
+	unreachable()
 }

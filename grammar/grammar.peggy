@@ -1,4 +1,4 @@
-Program = _ stmts:Statment* _ {
+Program = _ stmts:(stmt:Statment _ {return stmt})* _ {
     return {
       type: "Program",
       stmts,
@@ -12,7 +12,7 @@ Statment =
 LetDecl
   = "let" _ recursion:"rec"? _ name:Identifier _ args:(_ arg: Identifier {return arg})* _ "=" _ expr:Expression _ ";" {
     if (args.length !== 0) {
-      let rec = typeof recursion !== 'undefined';
+      let rec = recursion != null;
       return { type: 'FunDecl', name, arguments: args, body: expr, rec }
     } else {
       return { type: "LetDecl", name, expr };
@@ -37,11 +37,11 @@ LetExpr
   }
 
 IfExpr
-  = "if" _ cond:Expression _ "then" _ thenExpr:Expression (_ "else" _ elseExpr:Expression)* {
-    if (typeof elseExpr === 'undefined') {
-      return { type: "IfExpr", cond, thenExpr };
+  = "if" _ cond:Expression _ "then" _ then:Expression _ "else" _ e:Expression {
+    if (typeof e === 'undefined') {
+      return { type: "IfExpr", cond, then };
     } else {
-      return { type: "IfExpr", cond, thenExpr, elseExpr };
+      return { type: "IfExpr", cond, then, else: e };
     }
   }
 

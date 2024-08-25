@@ -89,7 +89,8 @@ export type FunExpr = {
 
 export type LetExpr = {
 	type: 'LetExpr'
-	binding: string
+	name: Identifier
+	val: Expression
 	body: Expression
 }
 
